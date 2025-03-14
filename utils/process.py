@@ -2,7 +2,7 @@ import numpy as np
 import pickle as pkl
 import networkx as nx
 import scipy.sparse as sp
-from scipy.sparse.linalg.eigen.arpack import eigsh
+from scipy.sparse.linalg import eigsh
 import sys
 
 """
@@ -14,17 +14,18 @@ import sys
 
 
 def adj_to_bias(adj, sizes, nhood=1):
-    nb_graphs = adj.shape[0]
+    nb_graphs = adj.shape[0]  # 그래프(배치) 개수
     mt = np.empty(adj.shape)
     for g in range(nb_graphs):
-        mt[g] = np.eye(adj.shape[1])
-        for _ in range(nhood):
+        mt[g] = np.eye(adj.shape[1])  # 자기 자신 연결
+        for _ in range(nhood):  # 몇 번째 이웃까지 카운트할지
             mt[g] = np.matmul(mt[g], (adj[g] + np.eye(adj.shape[1])))
+        # 연결되어 있으면 0, 아니면 -무한대 반환하도록 설정
         for i in range(sizes[g]):
             for j in range(sizes[g]):
                 if mt[g][i][j] > 0.0:
                     mt[g][i][j] = 1.0
-    return -1e9 * (1.0 - mt)
+    return -1e9 * (1.0 - mt)  # [batch_size, nb_nodes, nb_nodes]
 
 
 ###############################################
@@ -58,6 +59,13 @@ def load_data(dataset_str):  # {'pubmed', 'citeseer', 'cora'}
             else:
                 objects.append(pkl.load(f))
 
+    # x: sparse matrix, [훈련 노드 수 × 특징 수], 훈련 노드들의 특징 벡터를 저장한 행렬
+    # y: numpy array, [훈련 노드 수 × 클래스 수], 훈련 노드들의 클래스 레이블을 원-핫(one-hot) 벡터로 저장한 행렬
+    # tx: sparse matrix, [테스트 노드 수 × 특징 수], 테스트 노드의 특징 벡터를 저장한 행렬
+    # ty: numpy array, [테스트 노드 수 × 클래스 수], 테스트 노드들의 클래스 레이블을 원-핫(one-hot) 벡터로 저장한 행렬
+    # allx: sparse matrix, [훈련+검증 노드 수 × 특징 수], 훈련+검증 노드들의 특징 벡터를 저장한 행렬
+    # ally: numpy array, [훈련+검증 노드 수 × 클래스 수], 훈련+검증 노드들의 클래스 레이블을 원-핫(one-hot) 벡터로 저장한 행렬
+    # graph: python dictionary, {노드idx: [이웃 노드idx]}, 그래프 연결 구조
     x, y, tx, ty, allx, ally, graph = tuple(objects)
     test_idx_reorder = parse_index_file("data/ind.{}.test.index".format(dataset_str))
     test_idx_range = np.sort(test_idx_reorder)
@@ -73,21 +81,28 @@ def load_data(dataset_str):  # {'pubmed', 'citeseer', 'cora'}
         ty_extended[test_idx_range - min(test_idx_range), :] = ty
         ty = ty_extended
 
+    # 전체 노드(훈련+검증+테스트)의 특징행렬(features) 생성 및 테스트 노드 특징 재정렬
     features = sp.vstack((allx, tx)).tolil()
     features[test_idx_reorder, :] = features[test_idx_range, :]
+
+    # 인접행렬 생성
     adj = nx.adjacency_matrix(nx.from_dict_of_lists(graph))
 
+    # 전체 노드의 레이블(labels) 생성 및 테스트 노드 레이블 재정렬
     labels = np.vstack((ally, ty))
     labels[test_idx_reorder, :] = labels[test_idx_range, :]
 
+    # 훈련, 검증, 테스트 데이터 인덱스 설정
     idx_test = test_idx_range.tolist()
     idx_train = range(len(y))
     idx_val = range(len(y), len(y) + 500)
 
+    # 각 데이터셋에 속하는 노드를 나타내는 마스크 생성 (해당하는 idx의 item은 1, 아니면 0)
     train_mask = sample_mask(idx_train, labels.shape[0])
     val_mask = sample_mask(idx_val, labels.shape[0])
     test_mask = sample_mask(idx_test, labels.shape[0])
 
+    # 각 데이터셋에 해당하는 노드들의 레이블만 복사, 해당하지 않는 노드는 0
     y_train = np.zeros(labels.shape)
     y_val = np.zeros(labels.shape)
     y_test = np.zeros(labels.shape)
@@ -98,6 +113,7 @@ def load_data(dataset_str):  # {'pubmed', 'citeseer', 'cora'}
     print(adj.shape)
     print(features.shape)
 
+    # 결과 반환
     return adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask
 
 
@@ -164,10 +180,13 @@ def standardize_data(f, train_mask):
 
 def preprocess_features(features):
     """Row-normalize feature matrix and convert to tuple representation"""
+    # row-wise 합
     rowsum = np.array(features.sum(1))
     r_inv = np.power(rowsum, -1).flatten()
+    # 역수
     r_inv[np.isinf(r_inv)] = 0.0
     r_mat_inv = sp.diags(r_inv)
+    # 역수를 곱해서 각 특징 정규화
     features = r_mat_inv.dot(features)
     return features.todense(), sparse_to_tuple(features)
 

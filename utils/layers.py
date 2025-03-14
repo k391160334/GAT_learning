@@ -8,26 +8,34 @@ def attn_head(
     seq, out_sz, bias_mat, activation, in_drop=0.0, coef_drop=0.0, residual=False
 ):
     with tf.name_scope("my_attn"):
+        # 입력 특징에 dropout 적용
         if in_drop != 0.0:
             seq = tf.nn.dropout(seq, 1.0 - in_drop)
 
+        # 내부적으로 weight matrix를 관리함. 합성곱 커널크기가 1이므로 선형변환임. [batch_size, nb_node, out_sz]
         seq_fts = tf.layers.conv1d(seq, out_sz, 1, use_bias=False)
 
         # simplest self-attention possible
-        f_1 = tf.layers.conv1d(seq_fts, 1, 1)
-        f_2 = tf.layers.conv1d(seq_fts, 1, 1)
-        logits = f_1 + tf.transpose(f_2, [0, 2, 1])
-        coefs = tf.nn.softmax(tf.nn.leaky_relu(logits) + bias_mat)
+        f_1 = tf.layers.conv1d(seq_fts, 1, 1)  # [batch_size, nb_node, 1]
+        f_2 = tf.layers.conv1d(seq_fts, 1, 1)  # [batch_size, nb_node, 1]
+        logits = f_1 + tf.transpose(
+            f_2, [0, 2, 1]
+        )  # 브로드 캐스팅하여 각 노드 쌍 별 attention score 생성
+        coefs = tf.nn.softmax(
+            tf.nn.leaky_relu(logits) + bias_mat
+        )  # bias matrix 적용하여 최종 attention 계수 행렬 생성
 
+        # attention dropout
         if coef_drop != 0.0:
             coefs = tf.nn.dropout(coefs, 1.0 - coef_drop)
         if in_drop != 0.0:
             seq_fts = tf.nn.dropout(seq_fts, 1.0 - in_drop)
 
+        # attention 계수와 변환된 특징벡터 행렬곱
         vals = tf.matmul(coefs, seq_fts)
         ret = tf.contrib.layers.bias_add(vals)
 
-        # residual connection
+        # residual connection이 활성화 된 경우 이전 입력과 출력을 합쳐줌
         if residual:
             if seq.shape[-1] != ret.shape[-1]:
                 ret = ret + conv1d(seq, ret.shape[-1], 1)  # activation
