@@ -180,7 +180,7 @@ def standardize_data(f, train_mask):
 
 def preprocess_features(features):
     """Row-normalize feature matrix and convert to tuple representation"""
-    # row-wise 합
+    # feature-wise 합
     rowsum = np.array(features.sum(1))
     r_inv = np.power(rowsum, -1).flatten()
     # 역수
